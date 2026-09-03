@@ -5,16 +5,19 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/primary_learning_db?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8
     username: root
-    password: 
+    password:
     driver-class-name: com.mysql.cj.jdbc.Driver
+
   jpa:
     hibernate:
-      ddl-auto: update # Cập nhật DB tự động
+      ddl-auto: update
     show-sql: true
     properties:
       hibernate:
         format_sql: true
         dialect: org.hibernate.dialect.MySQLDialect
+
+  security:   # 👈 PHẢI CÓ
     oauth2:
       client:
         registration:
@@ -28,6 +31,6 @@ spring:
 jwt:
   secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
   access-token:
-    expiration: 900000 # 15 minutes (ms)
+    expiration: 900000
   refresh-token:
-    expiration: 604800000 # 7 days (ms)
+    expiration: 604800000

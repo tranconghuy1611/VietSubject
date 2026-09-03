@@ -1,6 +1,8 @@
 package WebHocTap.com.example.WebHocTap.security;
 
 import WebHocTap.com.example.WebHocTap.entity.User;
+import WebHocTap.com.example.WebHocTap.enums.Role;
+import WebHocTap.com.example.WebHocTap.enums.AuthProvider;
 import WebHocTap.com.example.WebHocTap.repository.UserRepository;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,6 +14,7 @@ import org.springframework.security.web.authentication.SimpleUrlAuthenticationSu
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -23,28 +26,36 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request,
                                         HttpServletResponse response,
-                                        Authentication authentication) throws IOException, ServletException {
+                                        Authentication authentication)
+            throws IOException, ServletException {
 
         OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();
 
-        String email = oAuth2User.getAttribute("email");
-        String name = oAuth2User.getAttribute("name");
+        Map<String, Object> attributes = oAuth2User.getAttributes();
 
-        // 🔎 check user
+        String email = (String) attributes.get("email");
+        String name = (String) attributes.get("name");
+        String googleId = (String) attributes.get("sub");
+
+        if (email == null) {
+            throw new RuntimeException("Email not found from Google");
+        }
+
         User user = userRepository.findByEmail(email)
                 .orElseGet(() -> {
                     User newUser = new User();
                     newUser.setEmail(email);
                     newUser.setFullName(name);
-                    newUser.setRole("USER"); // hoặc enum của bạn
-                    newUser.setProvider("GOOGLE"); // nếu có field
+                    newUser.setGoogleId(googleId);
+                    newUser.setRole(Role.STUDENT);
+                    newUser.setProvider(AuthProvider.GOOGLE);
                     return userRepository.save(newUser);
                 });
 
-        // 🔐 tạo JWT
-        String accessToken = jwtService.generateToken(user);
+        String accessToken = jwtService.generateAccessToken(user);
 
-        // 🚀 redirect về frontend
-        response.sendRedirect("http://localhost:5173/login-success?token=" + accessToken);
+        response.sendRedirect(
+                "http://localhost:5173/login-success?token=" + accessToken
+        );
     }
 }
