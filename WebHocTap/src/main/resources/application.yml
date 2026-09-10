@@ -17,7 +17,12 @@ spring:
         format_sql: true
         dialect: org.hibernate.dialect.MySQLDialect
 
-  security:   # 👈 PHẢI CÓ
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
+
+  security:
     oauth2:
       client:
         registration:
@@ -34,3 +39,9 @@ jwt:
     expiration: 900000
   refresh-token:
     expiration: 604800000
+
+cloudinary:
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+  api-key: ${CLOUDINARY_API_KEY:}
+  api-secret: ${CLOUDINARY_API_SECRET:}
+  folder: ${CLOUDINARY_FOLDER:vietsubject/avatars}

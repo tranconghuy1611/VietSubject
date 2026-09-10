@@ -19,11 +19,39 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(InvalidRequestException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBadRequest(InvalidRequestException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(InvalidRequestException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.<Void>builder()
                         .status(HttpStatus.BAD_REQUEST.value())
                         .message(ex.getMessage())
+                        .build());
+    }
+
+    @ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBadRequest(BadRequestException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.<Void>builder()
+                        .status(HttpStatus.BAD_REQUEST.value())
+                        .message(ex.getMessage())
+                        .build());
+    }
+
+    @ExceptionHandler(CloudinaryUploadException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCloudinaryUpload(CloudinaryUploadException ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.<Void>builder()
+                        .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                        .message(ex.getMessage())
+                        .build());
+    }
+
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(
+            org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.<Void>builder()
+                        .status(HttpStatus.BAD_REQUEST.value())
+                        .message("File size must not exceed 5MB")
                         .build());
     }
 
