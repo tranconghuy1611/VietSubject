@@ -18,10 +18,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-/**
- * User self-service and admin user-management APIs.
- * <p>Identity is always resolved from JWT — never accept userId from the client for /me.
- */
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor

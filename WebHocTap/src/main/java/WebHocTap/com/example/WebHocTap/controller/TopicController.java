@@ -11,14 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Topic APIs.
- * <ul>
- *   <li>Read: STUDENT, PARENT, ADMIN</li>
- *   <li>Create / Update / Delete: ADMIN only</li>
- * </ul>
- * userId is never accepted from the request — identity comes from JWT via SecurityContext.
- */
+
 @RestController
 @RequestMapping("/api/topics")
 @RequiredArgsConstructor

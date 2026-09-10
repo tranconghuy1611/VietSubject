@@ -12,10 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * Parent–child relationship APIs.
- * <p>parentId is always taken from the JWT — never from the request body.
- */
+
 @RestController
 @RequestMapping("/api/parents")
 @RequiredArgsConstructor

@@ -13,10 +13,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Read APIs for subjects and their topics.
- * Accessible to all authenticated roles (STUDENT, PARENT, ADMIN).
- */
 @RestController
 @RequestMapping("/api/subjects")
 @RequiredArgsConstructor

@@ -74,6 +74,19 @@ public class PracticeServiceImpl implements PracticeService {
                 .sessionId(saved.getId())
                 .build();
     }
+    @Override
+    @Transactional(readOnly = true)
+    public SessionDetailDTO getSession(Long sessionId) {
+        PracticeSession session = findSessionOrThrow(sessionId);
+
+        return SessionDetailDTO.builder()
+                .sessionId(session.getId())
+                .subjectName(session.getSubject().getName())
+                .topicName(session.getTopic() != null ? session.getTopic().getName() : null)
+                .startedAt(session.getStartedAt())
+                .endedAt(session.getEndedAt())
+                .build();
+    }
 
     // ──────────────────────────────────────────────────────────────────────────
     // 2. Generate Questions
@@ -216,19 +229,47 @@ public class PracticeServiceImpl implements PracticeService {
     // ──────────────────────────────────────────────────────────────────────────
 
     private PracticeSession findSessionOrThrow(Long sessionId) {
-        return sessionRepository.findById(sessionId)
+        PracticeSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Practice session not found with id: " + sessionId));
+
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        if (!session.getUser().getId().equals(currentUserId)) {
+            throw new InvalidRequestException("Access denied: not your session");
+        }
+
+        return session;
+    }
+    @Override
+    @Transactional(readOnly = true)
+    public List<PracticeHistoryDTO> getHistory() {
+        Long userId = SecurityUtils.getCurrentUserId();
+
+        List<PracticeSession> sessions =
+                sessionRepository.findByUserIdOrderByStartedAtDesc(userId);
+
+        return sessions.stream().map(session -> {
+
+            int total = userAnswerRepository.countBySessionId(session.getId());
+            int correct = userAnswerRepository.countCorrectBySessionId(session.getId());
+
+            double accuracy = total > 0 ? (double) correct / total : 0;
+
+            return PracticeHistoryDTO.builder()
+                    .sessionId(session.getId())
+                    .subjectName(session.getSubject().getName())
+                    .topicName(session.getTopic() != null ? session.getTopic().getName() : null)
+                    .totalQuestions(total)
+                    .correctCount(correct)
+                    .accuracy(accuracy)
+                    .startedAt(session.getStartedAt())
+                    .endedAt(session.getEndedAt())
+                    .build();
+
+        }).toList();
     }
 
-    /**
-     * Determine target question difficulty based on the user's performance level.
-     * <ul>
-     *   <li>Single topic  → look up that topic's performance record</li>
-     *   <li>Mixed topics  → pick the difficulty for the weakest topic</li>
-     *   <li>No record yet → default to EASY (new user / new topic)</li>
-     * </ul>
-     */
     private Difficulty resolveDifficulty(Long userId, Topic topic) {
         if (topic != null) {
             return userPerformanceRepository

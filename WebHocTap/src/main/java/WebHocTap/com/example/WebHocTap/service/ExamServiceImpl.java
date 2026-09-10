@@ -33,6 +33,94 @@ public class ExamServiceImpl implements ExamService {
     private final UserPerformanceRepository userPerformanceRepository;
     private final UserRepository userRepository;
 
+
+    @Override
+    public List<ExamListDTO> getAllExams() {
+        return examRepository.findAll().stream()
+                .filter(e -> Boolean.TRUE.equals(e.getIsActive()))
+                .map(e -> ExamListDTO.builder()
+                        .id(e.getId())
+                        .name(e.getName())
+                        .durationMinutes(e.getDurationMinutes())
+                        .totalQuestions(
+                                examQuestionRepository.countByExamId(e.getId())
+                        )
+                        .build())
+                .toList();
+    }
+    @Override
+    @Transactional(readOnly = true)
+    public List<ExamResultDTO> getMyResults() {
+        Long userId = SecurityUtils.getCurrentUserId();
+
+        List<ExamResult> results =
+                examResultRepository.findByUserIdOrderBySubmittedAtDesc(userId);
+
+        return results.stream()
+                .map(this::mapToResultDTO)
+                .toList();
+    }
+    @Override
+    @Transactional(readOnly = true)
+    public ExamResultDTO getResultDetail(Long resultId) {
+        ExamResult result = findResultOrThrow(resultId);
+
+        // ✅ check ownership
+        verifyOwnership(result);
+
+        return mapToResultDTO(result);
+    }
+    private ExamResultDTO mapToResultDTO(ExamResult result) {
+        float accuracy = result.getTotalQuestions() > 0
+                ? ((float) result.getCorrectCount() / result.getTotalQuestions()) * 100f
+                : 0f;
+
+        return ExamResultDTO.builder()
+                .resultId(result.getId())
+                .examId(result.getExam().getId())
+                .examName(result.getExam().getName())
+                .score(result.getScore())
+                .correctCount(result.getCorrectCount())
+                .totalQuestions(result.getTotalQuestions())
+                .accuracyPercent(accuracy)
+                .status(result.getStatus())
+                .startedAt(result.getStartedAt())
+                .submittedAt(result.getSubmittedAt())
+                .build();
+    }
+    @Override
+    public List<ExamReviewDTO> reviewExam(Long resultId) {
+
+        ExamResult result = findResultOrThrow(resultId);
+        verifyOwnership(result);
+
+        List<ExamAnswer> answers =
+                examAnswerRepository.findByResultIdWithDetails(resultId);
+
+        return answers.stream()
+                .map(a -> {
+                    Question q = a.getQuestion();
+
+                    String correctAnswer = q.getAnswers().stream()
+                            .filter(ans -> Boolean.TRUE.equals(ans.getIsCorrect()))
+                            .map(Answer::getContent)
+                            .findFirst()
+                            .orElse(null);
+
+                    String userAnswer = a.getSelectedAnswer() != null
+                            ? a.getSelectedAnswer().getContent()
+                            : a.getSubmittedText();
+
+                    return ExamReviewDTO.builder()
+                            .questionId(q.getId())
+                            .questionContent(q.getContent())
+                            .yourAnswer(userAnswer)
+                            .correctAnswer(correctAnswer)
+                            .isCorrect(a.getIsCorrect())
+                            .build();
+                })
+                .toList();
+    }
     // ──────────────────────────────────────────────────────────────────────────
     // 1. Start Exam
     //    userId ← JWT (SecurityContextHolder) — NEVER from the request body.
@@ -74,6 +162,7 @@ public class ExamServiceImpl implements ExamService {
     //    userId ← exam_result.user_id — NEVER from the request.
     //    Optional security check: JWT user == result owner.
     // ──────────────────────────────────────────────────────────────────────────
+
 
     @Override
     @Transactional(readOnly = true)

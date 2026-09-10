@@ -18,7 +18,10 @@ public interface ExamService {
 
     /** Return ordered questions (without correct flags) for an active result. */
     List<ExamQuestionDTO> getQuestions(Long resultId);
-
+    List<ExamListDTO> getAllExams();
+    List<ExamResultDTO> getMyResults();
+    ExamResultDTO getResultDetail(Long resultId);
+    List<ExamReviewDTO> reviewExam(Long resultId);
     /** Save (or update) a single answer for an active result. */
     SubmitExamAnswerResponseDTO submitAnswer(SubmitExamAnswerRequestDTO request);
 

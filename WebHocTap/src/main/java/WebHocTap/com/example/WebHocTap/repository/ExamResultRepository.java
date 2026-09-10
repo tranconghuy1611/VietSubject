@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -28,5 +29,11 @@ public interface ExamResultRepository extends JpaRepository<ExamResult, Long> {
      * Guard against double-submission: check whether a result already has
      * the given status (typically SUBMITTED).
      */
+    // ✅ FIX: đổi createdAt → submittedAt
+    List<ExamResult> findByUserIdOrderBySubmittedAtDesc(Long userId);
+
+    // ✅ thêm nếu cần lấy bài đang làm
+    List<ExamResult> findByUserIdAndStatus(Long userId, ExamStatus status);
+
     boolean existsByIdAndStatus(Long resultId, ExamStatus status);
 }

@@ -29,14 +29,7 @@ public class PracticeController {
     // POST /api/practice/start
     // ──────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Start a new practice session.
-     * The authenticated user's id is extracted from the JWT — not from the body.
-     *
-     * <p>Request body:
-     * <pre>{@code { "subjectId": 1, "topicId": 5 }}</pre>
-     * (topicId is optional — omit or set to null for mixed-topic mode)
-     */
+
     @PostMapping("/start")
     public ResponseEntity<ApiResponse<StartSessionResponseDTO>> startSession(
             @RequestBody StartSessionRequestDTO request) {
@@ -49,7 +42,30 @@ public class PracticeController {
                         .data(data)
                         .build());
     }
+    @GetMapping("/{sessionId}")
+    public ResponseEntity<ApiResponse<SessionDetailDTO>> getSession(
+            @PathVariable Long sessionId) {
 
+        SessionDetailDTO data = practiceService.getSession(sessionId);
+
+        return ResponseEntity.ok(ApiResponse.<SessionDetailDTO>builder()
+                .status(HttpStatus.OK.value())
+                .message("Session retrieved successfully.")
+                .data(data)
+                .build());
+    }
+
+    @GetMapping("/history")
+    public ResponseEntity<ApiResponse<List<PracticeHistoryDTO>>> getHistory() {
+
+        List<PracticeHistoryDTO> data = practiceService.getHistory();
+
+        return ResponseEntity.ok(ApiResponse.<List<PracticeHistoryDTO>>builder()
+                .status(HttpStatus.OK.value())
+                .message("History retrieved successfully.")
+                .data(data)
+                .build());
+    }
     // ──────────────────────────────────────────────────────────────────────────
     // GET /api/practice/questions?sessionId=
     // ──────────────────────────────────────────────────────────────────────────
@@ -74,20 +90,6 @@ public class PracticeController {
     // POST /api/practice/submit
     // ──────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Submit a single answer and receive correctness feedback.
-     *
-     * <p>Request body:
-     * <pre>{@code
-     * {
-     *   "sessionId":    1,
-     *   "questionId":   42,
-     *   "answerId":     7,       // for MULTIPLE_CHOICE
-     *   "submittedText": null,   // for FILL_BLANK / LISTENING
-     *   "timeSpent":    15       // seconds (optional)
-     * }
-     * }</pre>
-     */
     @PostMapping("/submit")
     public ResponseEntity<ApiResponse<SubmitAnswerResponseDTO>> submitAnswer(
             @RequestBody SubmitAnswerRequestDTO request) {

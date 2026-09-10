@@ -11,19 +11,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * REST controller for the full exam flow.
- *
- * <p><strong>Security note:</strong> userId is NEVER read from any request parameter or body.
- * <ul>
- *   <li>{@code startExam}    — userId extracted from JWT via {@code SecurityUtils}</li>
- *   <li>{@code getQuestions} — userId read from the persisted exam_result row</li>
- *   <li>{@code submitAnswer} — userId read from the persisted exam_result row</li>
- *   <li>{@code submitExam}   — userId read from the persisted exam_result row</li>
- * </ul>
- *
- * <p>All endpoints require an authenticated JWT ({@code @PreAuthorize("isAuthenticated()")}).
- */
 @RestController
 @RequestMapping("/api/exams")
 @RequiredArgsConstructor
@@ -36,15 +23,55 @@ public class ExamController {
     // POST /api/exams/start/{examId}
     // ──────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Start an exam.
-     *
-     * <p>Validates that the exam exists and is active, creates an {@code exam_result}
-     * row with {@code status = IN_PROGRESS}, and returns the {@code resultId} the
-     * client must use for all subsequent calls.
-     *
-     * <p>userId is extracted from the JWT — never from the URL or body.
-     */
+    @GetMapping
+    public ResponseEntity<ApiResponse<List<ExamListDTO>>> getAllExams() {
+        List<ExamListDTO> data = examService.getAllExams();
+        return ResponseEntity.ok(ApiResponse.<List<ExamListDTO>>builder()
+                .status(HttpStatus.OK.value())
+                .message("Exams retrieved successfully.")
+                .data(data)
+                .build());
+    }
+    @GetMapping("/results/me")
+    public ResponseEntity<ApiResponse<List<ExamResultDTO>>> getMyResults() {
+
+        List<ExamResultDTO> data = examService.getMyResults();
+
+        return ResponseEntity.ok(ApiResponse.<List<ExamResultDTO>>builder()
+                .status(HttpStatus.OK.value())
+                .message("Exam history retrieved successfully.")
+                .data(data)
+                .build());
+    }
+    @GetMapping("/{resultId}/review")
+    public ResponseEntity<ApiResponse<List<ExamReviewDTO>>> reviewExam(
+            @PathVariable Long resultId) {
+
+        List<ExamReviewDTO> data = examService.reviewExam(resultId);
+
+        return ResponseEntity.ok(ApiResponse.<List<ExamReviewDTO>>builder()
+                .status(HttpStatus.OK.value())
+                .message("Review retrieved successfully.")
+                .data(data)
+                .build());
+    }
+
+    @PostMapping("/{resultId}/answers")
+    public ResponseEntity<ApiResponse<SubmitExamAnswerResponseDTO>> submitAnswerV2(
+            @PathVariable Long resultId,
+            @RequestBody SubmitExamAnswerRequestDTO request) {
+
+        request.setResultId(resultId); // reuse DTO cũ
+
+        SubmitExamAnswerResponseDTO result =
+                examService.submitAnswer(request);
+
+        return ResponseEntity.ok(ApiResponse.<SubmitExamAnswerResponseDTO>builder()
+                .status(HttpStatus.OK.value())
+                .message("Answer saved successfully.")
+                .data(result)
+                .build());
+    }
     @PostMapping("/start/{examId}")
     public ResponseEntity<ApiResponse<ExamStartResponseDTO>> startExam(
             @PathVariable Long examId) {
@@ -62,13 +89,6 @@ public class ExamController {
     // GET /api/exams/{resultId}/questions
     // ──────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Fetch all questions for an active exam result, ordered by {@code question_order}.
-     *
-     * <p>Answers are returned without the {@code isCorrect} flag.
-     * userId is resolved from the persisted {@code exam_result} row — not from the request.
-     * Ownership is verified against the JWT user before returning data.
-     */
     @GetMapping("/{resultId}/questions")
     public ResponseEntity<ApiResponse<List<ExamQuestionDTO>>> getQuestions(
             @PathVariable Long resultId) {
@@ -85,22 +105,7 @@ public class ExamController {
     // POST /api/exams/answer
     // ──────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Save (or overwrite) a single answer for an active exam result.
-     *
-     * <p>Request body:
-     * <pre>{@code
-     * {
-     *   "resultId":      1,
-     *   "questionId":    42,
-     *   "answerId":      7,         // MULTIPLE_CHOICE — provide answerId
-     *   "submittedText": null       // FILL_BLANK / LISTENING — provide submittedText
-     * }
-     * }</pre>
-     *
-     * <p>userId is derived from the exam_result row. No {@code userId} field is accepted.
-     * Calling this endpoint again for the same question overwrites the previous answer.
-     */
+
     @PostMapping("/answer")
     public ResponseEntity<ApiResponse<SubmitExamAnswerResponseDTO>> submitAnswer(
             @RequestBody SubmitExamAnswerRequestDTO request) {

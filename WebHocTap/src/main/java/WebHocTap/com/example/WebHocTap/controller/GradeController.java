@@ -14,10 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Read APIs for grades (sorted by level ASC).
- * Accessible to all authenticated roles (STUDENT, PARENT, ADMIN).
- */
+
 @RestController
 @RequestMapping("/api/grades")
 @RequiredArgsConstructor
