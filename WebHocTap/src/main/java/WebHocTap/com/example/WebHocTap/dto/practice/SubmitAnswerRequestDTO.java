@@ -1,12 +1,23 @@
 package WebHocTap.com.example.WebHocTap.dto.practice;
 
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+
+import java.util.List;
 
 @Data
 public class SubmitAnswerRequestDTO {
-    private Long sessionId;
+    @NotNull
     private Long questionId;
-    private Long answerId;       // for MULTIPLE_CHOICE / MULTIPLE_SELECT
-    private String submittedText; // for FILL_BLANK / LISTENING
-    private Integer timeSpent;   // seconds spent on this question
+
+    /** Single selection — MULTIPLE_CHOICE */
+    private Long answerId;
+
+    /** Multi selection — MULTIPLE_SELECT */
+    private List<Long> answerIds;
+
+    /** FILL_BLANK / LISTENING */
+    private String submittedText;
+
+    private Integer timeSpent;
 }

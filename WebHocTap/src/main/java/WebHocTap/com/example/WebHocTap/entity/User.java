@@ -61,14 +61,6 @@ public class User implements UserDetails {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
-    /**
-     * Raw username column (not the Spring Security principal).
-     * {@link #getUsername()} is overridden and may return email.
-     */
-    public String getAccountUsername() {
-        return this.username;
-    }
-
     // ================= SECURITY =================
 
     @Override

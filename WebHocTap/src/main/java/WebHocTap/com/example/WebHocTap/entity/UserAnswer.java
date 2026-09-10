@@ -55,5 +55,5 @@ public class UserAnswer {
     @OneToMany(mappedBy = "userAnswer", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
     @ToString.Exclude
-    private List<UserAnswerSelection> selections;
+    private List<UserAnswerSelection> selections = new java.util.ArrayList<>();
 }

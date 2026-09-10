@@ -3,8 +3,11 @@ package WebHocTap.com.example.WebHocTap.exception;
 import WebHocTap.com.example.WebHocTap.dto.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -14,6 +17,15 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiResponse.<Void>builder()
                         .status(HttpStatus.NOT_FOUND.value())
+                        .message(ex.getMessage())
+                        .build());
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ApiResponse<Void>> handleForbidden(ForbiddenException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.<Void>builder()
+                        .status(HttpStatus.FORBIDDEN.value())
                         .message(ex.getMessage())
                         .build());
     }
@@ -36,22 +48,15 @@ public class GlobalExceptionHandler {
                         .build());
     }
 
-    @ExceptionHandler(CloudinaryUploadException.class)
-    public ResponseEntity<ApiResponse<Void>> handleCloudinaryUpload(CloudinaryUploadException ex) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.<Void>builder()
-                        .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
-                        .message(ex.getMessage())
-                        .build());
-    }
-
-    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(
-            org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .map(err -> err.getField() + ": " + err.getDefaultMessage())
+                .collect(Collectors.joining("; "));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.<Void>builder()
                         .status(HttpStatus.BAD_REQUEST.value())
-                        .message("File size must not exceed 5MB")
+                        .message(message.isBlank() ? "Validation failed" : message)
                         .build());
     }
 

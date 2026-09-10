@@ -106,12 +106,9 @@ public class AuthService {
     private UserResponseDTO mapToUserResponse(User user) {
         return UserResponseDTO.builder()
                 .id(user.getId())
-                .username(user.getAccountUsername() != null ? user.getAccountUsername() : user.getEmail())
+                .username(user.getUsername())
                 .fullName(user.getFullName())
                 .role(user.getRole().name())
-                .isActive(user.getIsActive())
-                .avatarUrl(user.getAvatarUrl())
-                .createdAt(user.getCreatedAt())
                 .build();
     }
 }

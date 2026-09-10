@@ -1,27 +1,28 @@
 package WebHocTap.com.example.WebHocTap.service;
 
+import WebHocTap.com.example.WebHocTap.dto.PageResponse;
 import WebHocTap.com.example.WebHocTap.dto.exam.*;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 
-/**
- * Contract for the full exam flow.
- *
- * <p><strong>Security invariant:</strong> userId is NEVER accepted as a parameter.
- * It is always derived from either the JWT (via {@code SecurityUtils}) or the
- * persisted {@code exam_result} row.
- */
 public interface ExamService {
 
-    /** Start an exam, create an exam_result row, return its id. */
     ExamStartResponseDTO startExam(Long examId);
 
-    /** Return ordered questions (without correct flags) for an active result. */
+    PageResponse<ExamResponseDTO> listExams(Pageable pageable);
+
+    ExamResponseDTO getExamById(Long examId);
+
     List<ExamQuestionDTO> getQuestions(Long resultId);
 
-    /** Save (or update) a single answer for an active result. */
-    SubmitExamAnswerResponseDTO submitAnswer(SubmitExamAnswerRequestDTO request);
+    SubmitExamAnswerResponseDTO submitAnswer(Long resultId, SubmitExamAnswerRequestDTO request);
 
-    /** Grade all answers, persist the score, mark result as SUBMITTED. */
     ExamResultDTO submitExam(Long resultId);
+
+    PageResponse<ExamResultDTO> getMyResults(Pageable pageable);
+
+    ExamResultDTO getResultDetail(Long resultId);
+
+    ExamSummaryDTO getResultSummary(Long resultId);
 }

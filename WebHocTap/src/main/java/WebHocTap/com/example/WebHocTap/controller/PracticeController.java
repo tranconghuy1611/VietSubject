@@ -1,9 +1,14 @@
 package WebHocTap.com.example.WebHocTap.controller;
 
 import WebHocTap.com.example.WebHocTap.dto.ApiResponse;
+import WebHocTap.com.example.WebHocTap.dto.PageResponse;
 import WebHocTap.com.example.WebHocTap.dto.practice.*;
 import WebHocTap.com.example.WebHocTap.service.PracticeService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -12,10 +17,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * REST controller for all practice-session operations.
- *
- * <p><strong>Security note:</strong> userId is NEVER read from the request body.
- * It is resolved from the JWT by the service layer via {@code SecurityContextHolder}.
+ * Practice session APIs.
+ * <p>userId is NEVER accepted from the client — resolved from JWT.
  */
 @RestController
 @RequestMapping("/api/practice")
@@ -25,99 +28,78 @@ public class PracticeController {
 
     private final PracticeService practiceService;
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // POST /api/practice/start
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Start a new practice session.
-     * The authenticated user's id is extracted from the JWT — not from the body.
-     *
-     * <p>Request body:
-     * <pre>{@code { "subjectId": 1, "topicId": 5 }}</pre>
-     * (topicId is optional — omit or set to null for mixed-topic mode)
-     */
     @PostMapping("/start")
     public ResponseEntity<ApiResponse<StartSessionResponseDTO>> startSession(
-            @RequestBody StartSessionRequestDTO request) {
+            @Valid @RequestBody StartSessionRequestDTO request) {
 
-        StartSessionResponseDTO data = practiceService.startSession(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.<StartSessionResponseDTO>builder()
                         .status(HttpStatus.CREATED.value())
                         .message("Practice session started successfully.")
-                        .data(data)
+                        .data(practiceService.startSession(request))
                         .build());
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // GET /api/practice/questions?sessionId=
-    // ──────────────────────────────────────────────────────────────────────────
+    @GetMapping("/history")
+    public ResponseEntity<ApiResponse<PageResponse<PracticeHistoryItemDTO>>> getHistory(
+            @PageableDefault(size = 20, sort = "startedAt", direction = Sort.Direction.DESC)
+            Pageable pageable) {
 
-    /**
-     * Retrieve up to 10 adaptive questions for the session.
-     * The userId for exclusion/difficulty logic comes from the session entity — not the request.
-     */
-    @GetMapping("/questions")
-    public ResponseEntity<ApiResponse<List<QuestionDTO>>> getQuestions(
-            @RequestParam Long sessionId) {
+        return ResponseEntity.ok(ApiResponse.<PageResponse<PracticeHistoryItemDTO>>builder()
+                .status(HttpStatus.OK.value())
+                .message("OK")
+                .data(practiceService.getHistory(pageable))
+                .build());
+    }
 
-        List<QuestionDTO> questions = practiceService.getQuestions(sessionId);
+    @GetMapping("/{sessionId}")
+    public ResponseEntity<ApiResponse<SessionDetailDTO>> getSessionDetail(@PathVariable Long sessionId) {
+        return ResponseEntity.ok(ApiResponse.<SessionDetailDTO>builder()
+                .status(HttpStatus.OK.value())
+                .message("OK")
+                .data(practiceService.getSessionDetail(sessionId))
+                .build());
+    }
+
+    @GetMapping("/{sessionId}/questions")
+    public ResponseEntity<ApiResponse<List<QuestionDTO>>> getQuestions(@PathVariable Long sessionId) {
         return ResponseEntity.ok(ApiResponse.<List<QuestionDTO>>builder()
                 .status(HttpStatus.OK.value())
                 .message("Questions retrieved successfully.")
-                .data(questions)
+                .data(practiceService.getQuestions(sessionId))
                 .build());
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // POST /api/practice/submit
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Submit a single answer and receive correctness feedback.
-     *
-     * <p>Request body:
-     * <pre>{@code
-     * {
-     *   "sessionId":    1,
-     *   "questionId":   42,
-     *   "answerId":     7,       // for MULTIPLE_CHOICE
-     *   "submittedText": null,   // for FILL_BLANK / LISTENING
-     *   "timeSpent":    15       // seconds (optional)
-     * }
-     * }</pre>
-     */
-    @PostMapping("/submit")
+    @PostMapping("/{sessionId}/answers")
     public ResponseEntity<ApiResponse<SubmitAnswerResponseDTO>> submitAnswer(
-            @RequestBody SubmitAnswerRequestDTO request) {
+            @PathVariable Long sessionId,
+            @Valid @RequestBody SubmitAnswerRequestDTO request) {
 
-        SubmitAnswerResponseDTO result = practiceService.submitAnswer(request);
         return ResponseEntity.ok(ApiResponse.<SubmitAnswerResponseDTO>builder()
                 .status(HttpStatus.OK.value())
                 .message("Answer submitted.")
-                .data(result)
+                .data(practiceService.submitAnswer(sessionId, request))
                 .build());
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // POST /api/practice/finish/{sessionId}
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Finish the session and return a performance summary.
-     * Calling this endpoint is idempotent — subsequent calls return the same summary
-     * without updating {@code ended_at} again.
-     */
-    @PostMapping("/finish/{sessionId}")
-    public ResponseEntity<ApiResponse<SessionSummaryDTO>> finishSession(
-            @PathVariable Long sessionId) {
-
-        SessionSummaryDTO summary = practiceService.finishSession(sessionId);
+    @PostMapping("/{sessionId}/finish")
+    public ResponseEntity<ApiResponse<SessionSummaryDTO>> finishSession(@PathVariable Long sessionId) {
         return ResponseEntity.ok(ApiResponse.<SessionSummaryDTO>builder()
                 .status(HttpStatus.OK.value())
                 .message("Session finished.")
-                .data(summary)
+                .data(practiceService.finishSession(sessionId))
+                .build());
+    }
+
+    @PostMapping("/{sessionId}/skip")
+    public ResponseEntity<ApiResponse<Void>> skipQuestion(
+            @PathVariable Long sessionId,
+            @Valid @RequestBody SkipQuestionRequestDTO request) {
+
+        practiceService.skipQuestion(sessionId, request);
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .status(HttpStatus.OK.value())
+                .message("Question skipped.")
                 .build());
     }
 }

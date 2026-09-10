@@ -1,30 +1,36 @@
 package WebHocTap.com.example.WebHocTap.service;
 
+import WebHocTap.com.example.WebHocTap.dto.PageResponse;
 import WebHocTap.com.example.WebHocTap.dto.exam.*;
 import WebHocTap.com.example.WebHocTap.entity.*;
 import WebHocTap.com.example.WebHocTap.enums.ExamStatus;
 import WebHocTap.com.example.WebHocTap.enums.PerformanceLevel;
 import WebHocTap.com.example.WebHocTap.enums.QuestionType;
-import WebHocTap.com.example.WebHocTap.exception.InvalidRequestException;
+import WebHocTap.com.example.WebHocTap.exception.BadRequestException;
+import WebHocTap.com.example.WebHocTap.exception.ForbiddenException;
 import WebHocTap.com.example.WebHocTap.exception.ResourceNotFoundException;
 import WebHocTap.com.example.WebHocTap.repository.*;
 import WebHocTap.com.example.WebHocTap.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ExamServiceImpl implements ExamService {
 
     private static final float WEAK_THRESHOLD = 0.5f;
     private static final float GOOD_THRESHOLD = 0.8f;
+    private static final String MULTI_SELECT_PREFIX = "IDS:";
 
     private final ExamRepository examRepository;
     private final ExamQuestionRepository examQuestionRepository;
@@ -33,32 +39,22 @@ public class ExamServiceImpl implements ExamService {
     private final UserPerformanceRepository userPerformanceRepository;
     private final UserRepository userRepository;
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 1. Start Exam
-    //    userId ← JWT (SecurityContextHolder) — NEVER from the request body.
-    // ──────────────────────────────────────────────────────────────────────────
-
     @Override
     @Transactional
     public ExamStartResponseDTO startExam(Long examId) {
-        // ✅ Extract the authenticated user from the JWT — never trust client-supplied userId
         User currentUser = SecurityUtils.getCurrentUser();
 
-        Exam exam = examRepository.findById(examId)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Exam not found with id: " + examId));
-
-        if (Boolean.FALSE.equals(exam.getIsActive())) {
-            throw new InvalidRequestException("Exam is not active: " + examId);
-        }
+        Exam exam = examRepository.findByIdAndIsActiveTrue(examId)
+                .orElseThrow(() -> new ResourceNotFoundException("Exam not found with id: " + examId));
 
         ExamResult result = new ExamResult();
-        result.setUser(currentUser);   // ✅ from JWT, not request
+        result.setUser(currentUser);
         result.setExam(exam);
         result.setStatus(ExamStatus.IN_PROGRESS);
         result.setTotalQuestions(examQuestionRepository.countByExamId(examId));
 
         ExamResult saved = examResultRepository.save(result);
+        log.info("Exam {} started as result {} by user {}", examId, saved.getId(), currentUser.getId());
 
         return ExamStartResponseDTO.builder()
                 .resultId(saved.getId())
@@ -69,87 +65,70 @@ public class ExamServiceImpl implements ExamService {
                 .build();
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 2. Get Questions
-    //    userId ← exam_result.user_id — NEVER from the request.
-    //    Optional security check: JWT user == result owner.
-    // ──────────────────────────────────────────────────────────────────────────
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<ExamResponseDTO> listExams(Pageable pageable) {
+        Page<ExamResponseDTO> page = examRepository.findByIsActiveTrue(pageable).map(this::toExamResponse);
+        return PageResponse.from(page);
+    }
 
     @Override
     @Transactional(readOnly = true)
+    public ExamResponseDTO getExamById(Long examId) {
+        Exam exam = examRepository.findByIdAndIsActiveTrue(examId)
+                .orElseThrow(() -> new ResourceNotFoundException("Exam not found with id: " + examId));
+        return toExamResponse(exam);
+    }
+
+    @Override
+    @Transactional
     public List<ExamQuestionDTO> getQuestions(Long resultId) {
-        ExamResult result = findResultOrThrow(resultId);
+        ExamResult result = findOwnedResult(resultId);
+        autoSubmitIfExpired(result);
+        if (result.getStatus() == ExamStatus.SUBMITTED) {
+            throw new BadRequestException("Exam already submitted");
+        }
 
-        // ✅ userId comes from the persisted result entity — not the request
-        verifyOwnership(result);
-
-        Long examId = result.getExam().getId();
-        List<ExamQuestion> examQuestions =
-                examQuestionRepository.findByExamIdOrderByQuestionOrder(examId);
-
-        return examQuestions.stream()
+        return examQuestionRepository.findByExamIdOrderByQuestionOrder(result.getExam().getId())
+                .stream()
                 .map(this::mapToExamQuestionDTO)
                 .collect(Collectors.toList());
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 3. Submit Answer
-    //    userId ← exam_result.user_id — NEVER from the request.
-    //    Upsert-safe: if the user re-submits for the same question, overwrite.
-    // ──────────────────────────────────────────────────────────────────────────
-
     @Override
     @Transactional
-    public SubmitExamAnswerResponseDTO submitAnswer(SubmitExamAnswerRequestDTO request) {
-        ExamResult result = findResultOrThrow(request.getResultId());
+    public SubmitExamAnswerResponseDTO submitAnswer(Long resultId, SubmitExamAnswerRequestDTO request) {
+        ExamResult result = findOwnedResult(resultId);
+        autoSubmitIfExpired(result);
 
-        // Guard: can only answer while exam is in progress
         if (result.getStatus() != ExamStatus.IN_PROGRESS) {
-            throw new InvalidRequestException(
-                    "Cannot submit answer — exam result " + request.getResultId()
-                            + " is already " + result.getStatus());
+            throw new BadRequestException("Exam already submitted");
         }
 
-        // ✅ Security check — JWT user must match the result owner
-        verifyOwnership(result);
-
-        // Validate the question belongs to this exam
         Long examId = result.getExam().getId();
-        List<ExamQuestion> examQuestions =
-                examQuestionRepository.findByExamIdOrderByQuestionOrder(examId);
-
-        ExamQuestion matchedEq = examQuestions.stream()
+        ExamQuestion matchedEq = examQuestionRepository.findByExamIdOrderByQuestionOrder(examId).stream()
                 .filter(eq -> eq.getQuestion().getId().equals(request.getQuestionId()))
                 .findFirst()
-                .orElseThrow(() -> new InvalidRequestException(
-                        "Question " + request.getQuestionId()
-                                + " does not belong to exam " + examId));
+                .orElseThrow(() -> new BadRequestException(
+                        "Question " + request.getQuestionId() + " does not belong to exam " + examId));
 
         Question question = matchedEq.getQuestion();
+        validateAnswerPayload(question.getQuestionType(), request);
 
-        // Resolve selected answer entity for MC questions
-        Answer selectedAnswer = null;
-        if (request.getAnswerId() != null) {
-            selectedAnswer = question.getAnswers().stream()
-                    .filter(a -> a.getId().equals(request.getAnswerId()))
-                    .findFirst()
-                    .orElseThrow(() -> new InvalidRequestException(
-                            "Answer " + request.getAnswerId()
-                                    + " does not belong to question " + question.getId()));
-        }
+        Answer selectedAnswer = resolvePrimarySelectedAnswer(question, request);
+        String submittedText = resolveSubmittedText(question.getQuestionType(), request);
 
-        // Upsert: overwrite previous answer for the same question if it exists
         ExamAnswer examAnswer = examAnswerRepository
                 .findByExamResultIdAndQuestionId(result.getId(), question.getId())
                 .orElseGet(ExamAnswer::new);
 
-        examAnswer.setExamResult(result);          // ✅ userId carried via result → user
+        examAnswer.setExamResult(result);
         examAnswer.setQuestion(question);
         examAnswer.setSelectedAnswer(selectedAnswer);
-        examAnswer.setSubmittedText(request.getSubmittedText());
-        // isCorrect deliberately left null — evaluated only during submitExam()
+        examAnswer.setSubmittedText(submittedText);
 
         ExamAnswer saved = examAnswerRepository.save(examAnswer);
+        log.debug("Saved exam answer for result {} question {}", resultId, question.getId());
 
         return SubmitExamAnswerResponseDTO.builder()
                 .examAnswerId(saved.getId())
@@ -158,69 +137,114 @@ public class ExamServiceImpl implements ExamService {
                 .build();
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 4. Submit Exam  (CRITICAL)
-    //    userId ← exam_result.user_id — NEVER from the request.
-    //    Cannot submit twice.  Score = (correct / total) * 10.
-    // ──────────────────────────────────────────────────────────────────────────
-
     @Override
     @Transactional
     public ExamResultDTO submitExam(Long resultId) {
-        // 1. Validate result exists
-        ExamResult result = findResultOrThrow(resultId);
+        ExamResult result = findOwnedResult(resultId);
 
-        // 2. userId from result entity — NOT from request
-        // 3. Verify ownership via JWT
-        verifyOwnership(result);
-
-        // Constraint: cannot submit twice
         if (result.getStatus() == ExamStatus.SUBMITTED) {
-            throw new InvalidRequestException(
-                    "Exam result " + resultId + " has already been submitted.");
+            throw new BadRequestException("Exam already submitted");
         }
 
-        // 4. Load all answers for this result (single JOIN FETCH query — no N+1)
-        List<ExamAnswer> answers = examAnswerRepository.findByResultIdWithDetails(resultId);
+        return gradeAndSubmit(result);
+    }
 
-        // 5. Load the full question list to handle unanswered questions correctly
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<ExamResultDTO> getMyResults(Pageable pageable) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        Page<ExamResultDTO> page = examResultRepository.findByUserId(userId, pageable)
+                .map(this::toResultDto);
+        return PageResponse.from(page);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ExamResultDTO getResultDetail(Long resultId) {
+        ExamResult result = findOwnedResult(resultId);
+        return toResultDto(result);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ExamSummaryDTO getResultSummary(Long resultId) {
+        ExamResult result = findOwnedResult(resultId);
+        long timeSpent = 0L;
+        if (result.getStartedAt() != null) {
+            LocalDateTime end = result.getSubmittedAt() != null ? result.getSubmittedAt() : LocalDateTime.now();
+            timeSpent = Duration.between(result.getStartedAt(), end).getSeconds();
+        }
+        return ExamSummaryDTO.builder()
+                .resultId(result.getId())
+                .totalQuestions(result.getTotalQuestions())
+                .correctCount(result.getCorrectCount())
+                .score(result.getScore())
+                .timeSpentSeconds(timeSpent)
+                .build();
+    }
+
+    // ───────────────────────── private ─────────────────────────
+
+    private ExamResult findOwnedResult(Long resultId) {
+        ExamResult result = examResultRepository.findByIdWithUserAndExam(resultId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Exam result not found with id: " + resultId));
+        verifyOwnership(result);
+        return result;
+    }
+
+    private void verifyOwnership(ExamResult result) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+        if (!result.getUser().getId().equals(currentUserId)) {
+            throw new ForbiddenException("Access denied");
+        }
+    }
+
+    /**
+     * If duration exceeded, auto-submit (grade) the exam.
+     */
+    private void autoSubmitIfExpired(ExamResult result) {
+        if (result.getStatus() != ExamStatus.IN_PROGRESS) {
+            return;
+        }
+        Integer durationMinutes = result.getExam().getDurationMinutes();
+        if (durationMinutes == null || result.getStartedAt() == null) {
+            return;
+        }
+        LocalDateTime deadline = result.getStartedAt().plusMinutes(durationMinutes);
+        if (LocalDateTime.now().isAfter(deadline)) {
+            log.info("Auto-submitting expired exam result {}", result.getId());
+            gradeAndSubmit(result);
+        }
+    }
+
+    private ExamResultDTO gradeAndSubmit(ExamResult result) {
+        List<ExamAnswer> answers = examAnswerRepository.findByResultIdWithDetails(result.getId());
         Long examId = result.getExam().getId();
         List<ExamQuestion> examQuestions =
                 examQuestionRepository.findByExamIdOrderByQuestionOrder(examId);
 
-        // Build a lookup map: questionId → submitted ExamAnswer
         Map<Long, ExamAnswer> answerByQuestionId = answers.stream()
-                .collect(Collectors.toMap(
-                        ea -> ea.getQuestion().getId(),
-                        ea -> ea));
+                .collect(Collectors.toMap(ea -> ea.getQuestion().getId(), ea -> ea));
 
-        // 5. Check correctness and persist isCorrect on each answer
         int correctCount = 0;
         for (ExamQuestion eq : examQuestions) {
             Question question = eq.getQuestion();
             ExamAnswer answer = answerByQuestionId.get(question.getId());
-
             if (answer == null) {
-                // Question was not answered — treated as incorrect, nothing to persist
                 continue;
             }
-
             boolean isCorrect = evaluateAnswer(question, answer);
             answer.setIsCorrect(isCorrect);
             examAnswerRepository.save(answer);
-
             if (isCorrect) {
                 correctCount++;
             }
         }
 
-        // 6. Calculate score
         int totalQuestions = examQuestions.size();
-        float score = totalQuestions > 0
-                ? ((float) correctCount / totalQuestions) * 10f
-                : 0f;
+        float score = totalQuestions > 0 ? ((float) correctCount / totalQuestions) * 10f : 0f;
 
-        // 7. Update exam_results
         result.setScore(score);
         result.setCorrectCount(correctCount);
         result.setTotalQuestions(totalQuestions);
@@ -228,64 +252,66 @@ public class ExamServiceImpl implements ExamService {
         result.setSubmittedAt(LocalDateTime.now());
         examResultRepository.save(result);
 
-        // 8. Update user_performance per topic for each answered question
-        Long userId = result.getUser().getId();
-        updatePerformancePerTopic(userId, examQuestions, answerByQuestionId);
+        updatePerformancePerTopic(result.getUser().getId(), examQuestions, answerByQuestionId);
+        log.info("Exam result {} submitted score={}", result.getId(), score);
 
-        float accuracy = totalQuestions > 0
-                ? ((float) correctCount / totalQuestions) * 100f
-                : 0f;
-
-        return ExamResultDTO.builder()
-                .resultId(result.getId())
-                .examId(result.getExam().getId())
-                .examName(result.getExam().getName())
-                .score(score)
-                .correctCount(correctCount)
-                .totalQuestions(totalQuestions)
-                .accuracyPercent(accuracy)
-                .status(ExamStatus.SUBMITTED)
-                .startedAt(result.getStartedAt())
-                .submittedAt(result.getSubmittedAt())
-                .build();
+        return toResultDto(result);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Load ExamResult with its user and exam eagerly to prevent lazy-load issues.
-     */
-    private ExamResult findResultOrThrow(Long resultId) {
-        return examResultRepository.findByIdWithUserAndExam(resultId)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Exam result not found with id: " + resultId));
-    }
-
-    /**
-     * Verify that the authenticated JWT user owns this exam result.
-     * userId is read from the result entity — NEVER from the request.
-     *
-     * @throws InvalidRequestException if the JWT user does not match result owner
-     */
-    private void verifyOwnership(ExamResult result) {
-        Long jwtUserId = SecurityUtils.getCurrentUserId();
-        Long resultOwnerId = result.getUser().getId();
-        if (!jwtUserId.equals(resultOwnerId)) {
-            throw new InvalidRequestException(
-                    "Access denied: exam result does not belong to the current user.");
+    private void validateAnswerPayload(QuestionType type, SubmitExamAnswerRequestDTO request) {
+        switch (type) {
+            case MULTIPLE_CHOICE -> {
+                if (request.getAnswerId() == null) {
+                    throw new BadRequestException("MULTIPLE_CHOICE requires answerId");
+                }
+                if (request.getAnswerIds() != null && !request.getAnswerIds().isEmpty()) {
+                    throw new BadRequestException("MULTIPLE_CHOICE must use answerId, not answerIds");
+                }
+            }
+            case MULTIPLE_SELECT -> {
+                if (request.getAnswerIds() == null || request.getAnswerIds().isEmpty()) {
+                    throw new BadRequestException("MULTIPLE_SELECT requires answerIds");
+                }
+            }
+            case FILL_BLANK, LISTENING -> {
+                if (request.getSubmittedText() == null || request.getSubmittedText().isBlank()) {
+                    throw new BadRequestException(type + " requires submittedText");
+                }
+            }
+            default -> { }
         }
     }
 
-    /**
-     * Evaluate correctness of a submitted exam answer based on question type.
-     *
-     * <ul>
-     *   <li>MULTIPLE_CHOICE / MULTIPLE_SELECT → {@code answer.is_correct} on the selected option</li>
-     *   <li>FILL_BLANK / LISTENING → case-insensitive text match (with accepted alternatives)</li>
-     * </ul>
-     */
+    private Answer resolvePrimarySelectedAnswer(Question question, SubmitExamAnswerRequestDTO request) {
+        if (request.getAnswerId() != null) {
+            return findAnswerOnQuestion(question, request.getAnswerId());
+        }
+        if (request.getAnswerIds() != null && !request.getAnswerIds().isEmpty()) {
+            return findAnswerOnQuestion(question, request.getAnswerIds().get(0));
+        }
+        return null;
+    }
+
+    private String resolveSubmittedText(QuestionType type, SubmitExamAnswerRequestDTO request) {
+        if (type == QuestionType.MULTIPLE_SELECT && request.getAnswerIds() != null) {
+            return MULTI_SELECT_PREFIX + request.getAnswerIds().stream()
+                    .map(String::valueOf)
+                    .collect(Collectors.joining(","));
+        }
+        return request.getSubmittedText();
+    }
+
+    private Answer findAnswerOnQuestion(Question question, Long answerId) {
+        if (question.getAnswers() == null) {
+            throw new BadRequestException("Question has no answers");
+        }
+        return question.getAnswers().stream()
+                .filter(a -> a.getId().equals(answerId))
+                .findFirst()
+                .orElseThrow(() -> new BadRequestException(
+                        "Answer " + answerId + " does not belong to question " + question.getId()));
+    }
+
     private boolean evaluateAnswer(Question question, ExamAnswer answer) {
         QuestionType type = question.getQuestionType();
 
@@ -306,17 +332,34 @@ public class ExamServiceImpl implements ExamService {
             return false;
         }
 
-        // MULTIPLE_CHOICE / MULTIPLE_SELECT
+        if (type == QuestionType.MULTIPLE_SELECT) {
+            Set<Long> correctIds = question.getAnswers() == null ? Set.of() : question.getAnswers().stream()
+                    .filter(a -> Boolean.TRUE.equals(a.getIsCorrect()))
+                    .map(Answer::getId)
+                    .collect(Collectors.toSet());
+            Set<Long> selectedIds = parseMultiSelectIds(answer.getSubmittedText());
+            return !correctIds.isEmpty() && correctIds.equals(selectedIds);
+        }
+
         if (answer.getSelectedAnswer() == null) return false;
         return Boolean.TRUE.equals(answer.getSelectedAnswer().getIsCorrect());
     }
 
-    /**
-     * Map ExamQuestion → ExamQuestionDTO, stripping the {@code isCorrect} flag from answers.
-     */
+    private Set<Long> parseMultiSelectIds(String submittedText) {
+        if (submittedText == null || !submittedText.startsWith(MULTI_SELECT_PREFIX)) {
+            return Set.of();
+        }
+        String raw = submittedText.substring(MULTI_SELECT_PREFIX.length());
+        if (raw.isBlank()) return Set.of();
+        return Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Long::valueOf)
+                .collect(Collectors.toSet());
+    }
+
     private ExamQuestionDTO mapToExamQuestionDTO(ExamQuestion eq) {
         Question q = eq.getQuestion();
-
         List<ExamAnswerDTO> answerDTOs = (q.getAnswers() == null)
                 ? Collections.emptyList()
                 : q.getAnswers().stream()
@@ -325,7 +368,6 @@ public class ExamServiceImpl implements ExamService {
                         .content(a.getContent())
                         .imageUrl(a.getImageUrl())
                         .audioUrl(a.getAudioUrl())
-                        // isCorrect intentionally omitted
                         .build())
                 .collect(Collectors.toList());
 
@@ -341,18 +383,44 @@ public class ExamServiceImpl implements ExamService {
                 .build();
     }
 
-    /**
-     * After exam submission, update (or create) a {@link UserPerformance} row for every
-     * topic that appears in the exam, based on how the user answered questions in that topic.
-     *
-     * <p>userId is sourced from the ExamResult — NOT from any request parameter.
-     */
+    private ExamResponseDTO toExamResponse(Exam exam) {
+        return ExamResponseDTO.builder()
+                .id(exam.getId())
+                .name(exam.getName())
+                .subjectId(exam.getSubject() != null ? exam.getSubject().getId() : null)
+                .subjectName(exam.getSubject() != null ? exam.getSubject().getName() : null)
+                .gradeId(exam.getGrade() != null ? exam.getGrade().getId() : null)
+                .gradeName(exam.getGrade() != null ? exam.getGrade().getName() : null)
+                .durationMinutes(exam.getDurationMinutes())
+                .totalQuestions(exam.getTotalQuestions())
+                .build();
+    }
+
+    private ExamResultDTO toResultDto(ExamResult result) {
+        float accuracy = 0f;
+        if (result.getTotalQuestions() != null && result.getTotalQuestions() > 0
+                && result.getCorrectCount() != null) {
+            accuracy = ((float) result.getCorrectCount() / result.getTotalQuestions()) * 100f;
+        }
+        return ExamResultDTO.builder()
+                .resultId(result.getId())
+                .examId(result.getExam().getId())
+                .examName(result.getExam().getName())
+                .score(result.getScore())
+                .correctCount(result.getCorrectCount())
+                .totalQuestions(result.getTotalQuestions())
+                .accuracyPercent(accuracy)
+                .status(result.getStatus())
+                .startedAt(result.getStartedAt())
+                .submittedAt(result.getSubmittedAt())
+                .build();
+    }
+
     private void updatePerformancePerTopic(
             Long userId,
             List<ExamQuestion> examQuestions,
             Map<Long, ExamAnswer> answerByQuestionId) {
 
-        // Group questions by topic
         Map<Long, List<ExamQuestion>> byTopic = examQuestions.stream()
                 .collect(Collectors.groupingBy(eq -> eq.getQuestion().getTopic().getId()));
 
@@ -398,7 +466,6 @@ public class ExamServiceImpl implements ExamService {
                 newLevel = PerformanceLevel.GOOD;
             }
             perf.setLevel(newLevel);
-
             userPerformanceRepository.save(perf);
         }
     }

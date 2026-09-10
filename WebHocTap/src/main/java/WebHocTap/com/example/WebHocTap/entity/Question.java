@@ -61,5 +61,5 @@ public class Question {
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
     @ToString.Exclude
-    private List<Answer> answers;
+    private List<Answer> answers = new java.util.ArrayList<>();
 }
